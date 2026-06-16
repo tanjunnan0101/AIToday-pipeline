@@ -1,0 +1,514 @@
+generator client {
+  provider   = "prisma-client-js"
+  engineType = "binary"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ADMIN
+  PROJECT_MANAGER
+  CONSULTANT
+  DEVELOPER
+  GRANT_WRITER
+  FINANCE
+  DESIGNER
+  CLIENT_VIEWER
+}
+
+enum TimelineGroup {
+  CLOSING_THE_CLIENT
+  DEVELOPMENT
+  FINAL_HANDOVER
+}
+
+enum TaskStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  WAITING_ON_CLIENT
+  WAITING_ON_INTERNAL_REVIEW
+  WAITING_ON_GRANT_APPROVAL
+  COMPLETED
+  BLOCKED
+}
+
+enum ClientStatus {
+  LEAD
+  CLOSING
+  CLOSED
+  ONBOARDING
+  IN_DELIVERY
+  PENDING_CLIENT_ACTION
+  PENDING_GRANT_ACTION
+  PENDING_HANDOVER
+  COMPLETED
+  ARCHIVED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum DocumentStatus {
+  MISSING
+  DRAFT
+  UPLOADED
+  INTERNAL_REVIEW
+  SENT_TO_CLIENT
+  CLIENT_APPROVED
+  APPROVED
+  SUPERSEDED
+  ARCHIVED
+}
+
+enum DocumentType {
+  IMPLEMENTATION_PLAN
+  CLIENT_FACING_PROPOSAL
+  CLIENT_FACING_INVOICE
+  EDG_GRANT_PROPOSAL
+  EDG_GRANT_INVOICE
+  CLIENT_FACING_ROADMAP
+  INTERNAL_ROADMAP
+  SIGN_OFF_DOCUMENT
+  SUPPORTING_DOCUMENT
+  CONTRACT
+  PAYMENT_PROOF
+  CLIENT_INFORMATION_FORM
+  MEETING_NOTES
+  WORKFLOW_DIAGRAM
+}
+
+enum ImplementationPlanStatus {
+  DRAFT
+  INTERNAL_REVIEW
+  SENT_TO_CLIENT
+  CLIENT_APPROVED
+  SUPERSEDED
+  ARCHIVED
+}
+
+enum PaymentStatus {
+  NOT_ISSUED
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum ApprovalStatus {
+  DRAFT
+  INTERNAL_REVIEW
+  SENT
+  APPROVED
+  REJECTED
+  REVISED
+  SUPERSEDED
+}
+
+enum SignOffStatus {
+  NOT_STARTED
+  PREPARING
+  SENT_TO_CLIENT
+  PENDING_CLIENT_SIGNATURE
+  SIGNED
+  COMPLETED
+  ARCHIVED
+}
+
+enum CommentEntityType {
+  CLIENT
+  STAGE
+  TASK
+  DOCUMENT
+  IMPLEMENTATION_PLAN
+}
+
+model User {
+  id                String                @id
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  name              String
+  email             String                @unique
+  role              UserRole
+  avatar            String?
+  capacityHours     Int                   @default(40)
+  ownedClients      Client[]              @relation("ClientOwner")
+  assignedStages    ClientPipelineStage[] @relation("StageOwner")
+  primaryTasks      Task[]                @relation("TaskPrimaryOwner")
+  supportingTasks   TaskAssignment[]
+  uploadedDocuments DocumentVersion[]     @relation("DocumentUploader")
+  uploadedPlans     ImplementationPlan[]  @relation("PlanUploader")
+  timeLogs          TimeLog[]
+  notifications     Notification[]
+  comments          Comment[]
+  auditLogs         AuditLog[]
+}
+
+model Client {
+  id                  String                @id
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  companyName         String
+  uen                 String                @unique
+  industry            String
+  projectValue        Decimal               @db.Decimal(12, 2)
+  grantType           String
+  status              ClientStatus
+  accountOwnerId      String
+  startDate           DateTime
+  targetHandoverDate  DateTime
+  notes               String?
+  accountOwner        User                  @relation("ClientOwner", fields: [accountOwnerId], references: [id])
+  contacts            ClientContact[]
+  pipelineStages      ClientPipelineStage[]
+  tasks               Task[]
+  implementationPlans ImplementationPlan[]
+  documents           Document[]
+  timeLogs            TimeLog[]
+  invoices            InvoiceRecord[]
+  proposals           ProposalRecord[]
+  grants              GrantRecord[]
+  handoverRecord      HandoverRecord?
+  portalAccess        ClientPortalAccess[]
+
+  @@index([status, accountOwnerId])
+}
+
+model ClientContact {
+  id           String               @id
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+  clientId     String
+  name         String
+  email        String
+  phone        String?
+  role         String
+  portalAccess Boolean              @default(false)
+  client       Client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  portalLinks   ClientPortalAccess[]
+}
+
+model PipelineStage {
+  id            String                @id
+  key           String                @unique
+  name          String
+  timelineGroup TimelineGroup
+  order         Int
+  clientStages  ClientPipelineStage[]
+}
+
+model ClientPipelineStage {
+  id                  String               @id
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  clientId            String
+  pipelineStageId     String
+  ownerId             String
+  status              TaskStatus
+  startDate           DateTime?
+  dueDate             DateTime?
+  completionDate      DateTime?
+  progress            Int                  @default(0)
+  blocker             Boolean              @default(false)
+  internalNotes       String?
+  clientNotes         String?
+  approvalStatus      ApprovalStatus       @default(DRAFT)
+  remarks             String?
+  client              Client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  pipelineStage       PipelineStage        @relation(fields: [pipelineStageId], references: [id], onDelete: Restrict)
+  owner               User                 @relation("StageOwner", fields: [ownerId], references: [id])
+  tasks               Task[]
+  documents           Document[]
+  implementationPlans ImplementationPlan[]
+  timeLogs            TimeLog[]
+
+  @@index([clientId, status])
+}
+
+model Task {
+  id                    String               @id
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  clientId              String
+  clientPipelineStageId String
+  implementationPlanId  String?
+  title                 String
+  description           String?
+  status                TaskStatus
+  priority              Priority
+  primaryOwnerId        String
+  startDate             DateTime?
+  endDate               DateTime?
+  estimatedHours        Decimal?             @db.Decimal(8, 2)
+  actualHours           Decimal?             @db.Decimal(8, 2)
+  completionPercent     Int                  @default(0)
+  blocker               Boolean              @default(false)
+  internalNotes         String?
+  clientNotes           String?
+  clientFacing          Boolean              @default(false)
+  client                Client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  stage                 ClientPipelineStage  @relation(fields: [clientPipelineStageId], references: [id], onDelete: Cascade)
+  implementationPlan    ImplementationPlan?  @relation(fields: [implementationPlanId], references: [id], onDelete: SetNull)
+  primaryOwner          User                 @relation("TaskPrimaryOwner", fields: [primaryOwnerId], references: [id])
+  assignments           TaskAssignment[]
+  dependenciesFrom      TaskDependency[]     @relation("DependencyFrom")
+  dependenciesTo        TaskDependency[]     @relation("DependencyTo")
+  subtasks              Subtask[]
+  documents             Document[]
+  timeLogs              TimeLog[]
+}
+
+model Subtask {
+  id                String    @id @default(cuid())
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  taskId            String
+  title             String
+  status            TaskStatus
+  startDate         DateTime?
+  endDate           DateTime?
+  estimatedHours    Decimal?  @db.Decimal(8, 2)
+  actualHours       Decimal?  @db.Decimal(8, 2)
+  completionPercent Int       @default(0)
+  task              Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+model TaskAssignment {
+  id        String @id @default(cuid())
+  taskId     String
+  userId     String
+  roleLabel  String
+  task       Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user       User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, userId])
+}
+
+model TaskDependency {
+  id            String @id @default(cuid())
+  predecessorId String
+  successorId   String
+  predecessor   Task   @relation("DependencyFrom", fields: [predecessorId], references: [id], onDelete: Cascade)
+  successor     Task   @relation("DependencyTo", fields: [successorId], references: [id], onDelete: Cascade)
+
+  @@unique([predecessorId, successorId])
+}
+
+model ImplementationPlan {
+  id                  String                   @id
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  clientId            String
+  clientStageId       String
+  name                String
+  version             String
+  status              ImplementationPlanStatus
+  approvalStatus      ApprovalStatus           @default(DRAFT)
+  uploadedById        String
+  uploadDate          DateTime
+  sourceType          String
+  sourceReference     String
+  remarks             String?
+  client              Client                   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  stage               ClientPipelineStage      @relation(fields: [clientStageId], references: [id], onDelete: Cascade)
+  uploadedBy          User                     @relation("PlanUploader", fields: [uploadedById], references: [id])
+  tasks               Task[]
+  implementationTasks ImplementationPlanTask[]
+  documents           Document[]
+}
+
+model ImplementationPlanTask {
+  id                   String             @id @default(cuid())
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  implementationPlanId String
+  title                String
+  description          String?
+  status               TaskStatus
+  priority             Priority
+  ownerId              String?
+  startDate            DateTime?
+  endDate              DateTime?
+  estimatedHours       Decimal?           @db.Decimal(8, 2)
+  actualHours          Decimal?           @db.Decimal(8, 2)
+  blocker              Boolean            @default(false)
+  notes                String?
+  implementationPlan   ImplementationPlan @relation(fields: [implementationPlanId], references: [id], onDelete: Cascade)
+  timeLogs             TimeLog[]
+}
+
+model Document {
+  id                   String               @id
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  clientId             String
+  clientStageId        String?
+  taskId               String?
+  implementationPlanId String?
+  currentVersionId     String?              @unique
+  name                 String
+  type                 DocumentType
+  status               DocumentStatus
+  clientFacing         Boolean              @default(false)
+  client               Client               @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  stage                ClientPipelineStage? @relation(fields: [clientStageId], references: [id], onDelete: SetNull)
+  task                 Task?                @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  implementationPlan   ImplementationPlan?  @relation(fields: [implementationPlanId], references: [id], onDelete: SetNull)
+  versions             DocumentVersion[]    @relation("DocumentVersions")
+  currentVersion       DocumentVersion?     @relation("CurrentDocumentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  proposalRecords      ProposalRecord[]
+  invoiceRecords       InvoiceRecord[]
+  grantProposalRecords GrantRecord[]        @relation("GrantProposalDocument")
+  grantInvoiceRecords  GrantRecord[]        @relation("GrantInvoiceDocument")
+}
+
+model DocumentVersion {
+  id           String       @id
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  documentId   String
+  versionLabel String
+  storagePath  String
+  mimeType     String
+  sizeBytes    Int?
+  status       DocumentStatus
+  uploadedById String
+  notes        String?
+  document     Document     @relation("DocumentVersions", fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedBy   User         @relation("DocumentUploader", fields: [uploadedById], references: [id])
+  currentFor   Document?    @relation("CurrentDocumentVersion")
+}
+
+model TimeLog {
+  id                       String                  @id
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+  clientId                 String
+  userId                   String
+  clientStageId            String
+  taskId                   String?
+  implementationPlanTaskId String?
+  hours                    Decimal                 @db.Decimal(6, 2)
+  billable                 Boolean                 @default(true)
+  entryDate                DateTime
+  description              String
+  client                   Client                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user                     User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task                     Task?                   @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  stage                    ClientPipelineStage     @relation(fields: [clientStageId], references: [id], onDelete: Cascade)
+  implementationPlanTask   ImplementationPlanTask? @relation(fields: [implementationPlanTaskId], references: [id], onDelete: SetNull)
+}
+
+model Comment {
+  id           String            @id
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  entityType   CommentEntityType
+  entityId     String
+  authorId     String
+  message      String
+  clientFacing Boolean           @default(false)
+  author       User              @relation(fields: [authorId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String   @id
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  userId    String
+  title     String
+  body      String
+  read      Boolean  @default(false)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id         String   @id
+  createdAt  DateTime @default(now())
+  actorId    String
+  action     String
+  entityType String
+  entityId   String
+  snapshot   Json?
+  actor      User     @relation(fields: [actorId], references: [id], onDelete: Cascade)
+}
+
+model ProposalRecord {
+  id             String         @id
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  clientId       String
+  documentId     String
+  sentDate       DateTime?
+  approvalStatus ApprovalStatus
+  clientComments String?
+  approvedDate   DateTime?
+  client         Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  document       Document       @relation(fields: [documentId], references: [id], onDelete: Cascade)
+}
+
+model InvoiceRecord {
+  id            String        @id
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  clientId      String
+  documentId    String
+  invoiceNumber String
+  amount        Decimal       @db.Decimal(12, 2)
+  status        PaymentStatus
+  sentDate      DateTime?
+  paidDate      DateTime?
+  remarks       String?
+  client        Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  document      Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+}
+
+model GrantRecord {
+  id                  String         @id
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  clientId            String
+  proposalDocumentId  String
+  invoiceDocumentId   String
+  submissionReadiness String?
+  submissionStatus    TaskStatus
+  approvalStatus      ApprovalStatus
+  remarks             String?
+  client              Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  proposalDocument    Document       @relation("GrantProposalDocument", fields: [proposalDocumentId], references: [id], onDelete: Cascade)
+  invoiceDocument     Document       @relation("GrantInvoiceDocument", fields: [invoiceDocumentId], references: [id], onDelete: Cascade)
+}
+
+model HandoverRecord {
+  id              String        @id
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  clientId        String        @unique
+  checklist       Json?
+  signOffStatus   SignOffStatus
+  walkthroughDate DateTime?
+  pendingActions  Json?
+  signedBy        String?
+  signOffDate     DateTime?
+  closureNotes    String?
+  client          Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+}
+
+model ClientPortalAccess {
+  id                  String        @id @default(cuid())
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  clientId            String
+  clientContactId     String
+  approvedDocumentIds String[]
+  client              Client        @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  clientContact       ClientContact @relation(fields: [clientContactId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, clientContactId])
+}
