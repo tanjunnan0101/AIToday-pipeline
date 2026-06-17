@@ -195,6 +195,18 @@ export type Task = {
   clientFacing: boolean;
 };
 
+export type Subtask = {
+  id: string;
+  taskId: string;
+  title: string;
+  status: TaskStatus;
+  startDate: string;
+  endDate: string;
+  estimatedHours: number;
+  actualHours: number;
+  completionPercent: number;
+};
+
 export type DocumentRecord = {
   id: string;
   clientId: string;
@@ -208,6 +220,7 @@ export type DocumentRecord = {
   uploadedAt: string;
   uploadedById: string;
   clientFacing: boolean;
+  storageObjectPath?: string;
 };
 
 export type ImplementationPlan = {
@@ -283,11 +296,13 @@ export type GrantRecord = {
 export type HandoverRecord = {
   id: string;
   clientId: string;
+  checklist: string[];
   signOffStatus: SignOffStatus;
   walkthroughDate: string;
   signedBy?: string;
   signOffDate?: string;
   pendingActions: string[];
+  closureNotes?: string;
 };
 
 export type CommentRecord = {
@@ -322,6 +337,7 @@ export type AppData = {
   contacts: ClientContact[];
   stages: PipelineStage[];
   tasks: Task[];
+  subtasks: Subtask[];
   documents: DocumentRecord[];
   implementationPlans: ImplementationPlan[];
   timeLogs: TimeLog[];

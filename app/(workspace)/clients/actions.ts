@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 
+import { requireInternalSession } from "@/lib/auth";
 import { clientStatuses } from "@/lib/domain";
 import { createClientWithStages } from "@/lib/data-access";
 
@@ -29,6 +30,7 @@ export async function createClientAction(
   _previousState: CreateClientFormState,
   formData: FormData,
 ) {
+  await requireInternalSession();
   const parsed = createClientSchema.safeParse({
     companyName: formData.get("companyName"),
     uen: formData.get("uen"),

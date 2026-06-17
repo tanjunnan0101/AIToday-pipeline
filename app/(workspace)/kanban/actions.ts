@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { requireSession } from "@/lib/auth";
+import { requireInternalSession } from "@/lib/auth";
 import { updateTaskStatus } from "@/lib/data-access";
 import { taskStatuses } from "@/lib/domain";
 
@@ -13,7 +13,7 @@ const moveTaskSchema = z.object({
 });
 
 export async function moveTaskAction(input: { taskId: string; status: string }) {
-  await requireSession();
+  await requireInternalSession();
 
   const parsed = moveTaskSchema.safeParse(input);
   if (!parsed.success) {

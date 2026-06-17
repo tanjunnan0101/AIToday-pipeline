@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { requireSession } from "@/lib/auth";
+import { requireInternalSession } from "@/lib/auth";
 import { createCommentRecord } from "@/lib/data-access";
 
 const createPlanCommentSchema = z.object({
@@ -21,7 +21,7 @@ export async function createPlanCommentAction(
   _previousState: CreatePlanCommentFormState,
   formData: FormData,
 ) {
-  const session = await requireSession();
+  const session = await requireInternalSession();
 
   const parsed = createPlanCommentSchema.safeParse({
     planId: formData.get("planId"),

@@ -3,8 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { requireSession } from "@/lib/auth";
-import { createTaskRecord, deleteTaskRecord, updateTaskRecord } from "@/lib/data-access";
+import { requireInternalSession } from "@/lib/auth";
+import {
+  createSubtaskRecord,
+  createTaskRecord,
+  deleteTaskRecord,
+  updateSubtaskRecord,
+  updateTaskRecord,
+} from "@/lib/data-access";
 import { priorities, taskStatuses } from "@/lib/domain";
 
 const createTaskSchema = z.object({
@@ -34,16 +40,33 @@ const deleteTaskSchema = z.object({
   taskId: z.string().min(1, "Task id is required."),
 });
 
+const createSubtaskSchema = z.object({
+  taskId: z.string().min(1, "Task id is required."),
+  title: z.string().min(2, "Subtask title is required."),
+  status: z.enum(taskStatuses, "Choose a subtask status."),
+  startDate: z.string().min(1, "Start date is required."),
+  endDate: z.string().min(1, "End date is required."),
+  estimatedHours: z.coerce.number().min(0, "Estimated hours must be 0 or greater."),
+  actualHours: z.coerce.number().min(0, "Actual hours must be 0 or greater."),
+  completionPercent: z.coerce.number().min(0).max(100),
+});
+
+const updateSubtaskSchema = createSubtaskSchema.extend({
+  subtaskId: z.string().min(1, "Subtask id is required."),
+});
+
 export type CreateTaskFormState = {
   message?: string;
   fieldErrors?: Record<string, string[] | undefined>;
 };
 
+export type SubtaskFormState = CreateTaskFormState;
+
 export async function createTaskAction(
   _previousState: CreateTaskFormState,
   formData: FormData,
 ) {
-  const session = await requireSession();
+  const session = await requireInternalSession();
 
   const parsed = createTaskSchema.safeParse({
     clientId: formData.get("clientId"),
@@ -97,7 +120,7 @@ export async function updateTaskAction(
   _previousState: CreateTaskFormState,
   formData: FormData,
 ) {
-  const session = await requireSession();
+  const session = await requireInternalSession();
 
   const parsed = updateTaskSchema.safeParse({
     taskId: formData.get("taskId"),
@@ -149,7 +172,7 @@ export async function updateTaskAction(
 }
 
 export async function deleteTaskAction(taskId: string) {
-  await requireSession();
+  await requireInternalSession();
 
   const parsed = deleteTaskSchema.safeParse({ taskId });
   if (!parsed.success) {
@@ -162,4 +185,87 @@ export async function deleteTaskAction(taskId: string) {
   revalidatePath("/kanban");
   revalidatePath("/dashboard");
   revalidatePath("/clients");
+}
+
+export async function createSubtaskAction(
+  _previousState: SubtaskFormState,
+  formData: FormData,
+) {
+  const session = await requireInternalSession();
+  const parsed = createSubtaskSchema.safeParse({
+    taskId: formData.get("taskId"),
+    title: formData.get("title"),
+    status: formData.get("status"),
+    startDate: formData.get("startDate"),
+    endDate: formData.get("endDate"),
+    estimatedHours: formData.get("estimatedHours") ?? 0,
+    actualHours: formData.get("actualHours") ?? 0,
+    completionPercent: formData.get("completionPercent") ?? 0,
+  });
+
+  if (!parsed.success) {
+    return {
+      message: "Please fix the highlighted fields.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  try {
+    await createSubtaskRecord(parsed.data);
+  } catch (error) {
+    return {
+      message: error instanceof Error ? error.message : "Unable to create the subtask.",
+    };
+  }
+
+  revalidatePath("/tasks");
+  revalidatePath("/kanban");
+  revalidatePath("/dashboard");
+  revalidatePath("/clients");
+
+  return {
+    message: `Subtask created by ${session.name}.`,
+  };
+}
+
+export async function updateSubtaskAction(
+  _previousState: SubtaskFormState,
+  formData: FormData,
+) {
+  const session = await requireInternalSession();
+  const parsed = updateSubtaskSchema.safeParse({
+    subtaskId: formData.get("subtaskId"),
+    taskId: formData.get("taskId"),
+    title: formData.get("title"),
+    status: formData.get("status"),
+    startDate: formData.get("startDate"),
+    endDate: formData.get("endDate"),
+    estimatedHours: formData.get("estimatedHours") ?? 0,
+    actualHours: formData.get("actualHours") ?? 0,
+    completionPercent: formData.get("completionPercent") ?? 0,
+  });
+
+  if (!parsed.success) {
+    return {
+      message: "Please fix the highlighted fields.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
+  }
+
+  try {
+    await updateSubtaskRecord(parsed.data);
+  } catch (error) {
+    return {
+      message: error instanceof Error ? error.message : "Unable to update the subtask.",
+    };
+  }
+
+  revalidatePath("/tasks");
+  revalidatePath("/kanban");
+  revalidatePath("/dashboard");
+  revalidatePath("/clients");
+
+  return {
+    message: `Subtask updated by ${session.name}.`,
+  };
 }

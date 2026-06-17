@@ -1,16 +1,20 @@
+import { EntityCommentForm } from "@/components/comments/entity-comment-form";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader } from "@/components/ui/card";
 import { CreateTaskForm } from "@/components/tasks/create-task-form";
+import { SubtaskForm } from "@/components/tasks/subtask-form";
 import { deleteTaskAction } from "@/app/(workspace)/tasks/actions";
-import { listClients, listStages, listTasks, listUsers } from "@/lib/data-access";
+import { listClients, listComments, listStages, listSubtasks, listTasks, listUsers } from "@/lib/data-access";
 import { formatHours } from "@/lib/utils";
 
 export default async function TasksPage() {
-  const [tasks, stages, users, clients] = await Promise.all([
+  const [tasks, stages, users, clients, subtasks, comments] = await Promise.all([
     listTasks(),
     listStages(),
     listUsers(),
     listClients(),
+    listSubtasks(),
+    listComments(),
   ]);
 
   return (
@@ -45,6 +49,10 @@ export default async function TasksPage() {
               {tasks.map((task) => {
                 const stage = stages.find((entry) => entry.id === task.stageId);
                 const owner = users.find((user) => user.id === task.primaryOwnerId);
+                const taskSubtasks = subtasks.filter((subtask) => subtask.taskId === task.id);
+                const taskComments = comments.filter(
+                  (comment) => comment.entityType === "TASK" && comment.entityId === task.id,
+                );
 
                 return (
                   <tr key={task.id} className="border-b border-slate-100">
@@ -75,6 +83,71 @@ export default async function TasksPage() {
                               Delete Task
                             </button>
                           </form>
+                        </div>
+                      </details>
+                      <details className="mt-4 rounded-2xl border border-slate-200/80 bg-white p-4">
+                        <summary className="cursor-pointer text-sm font-medium text-slate-700">
+                          Subtasks ({taskSubtasks.length})
+                        </summary>
+                        <div className="mt-4 space-y-4">
+                          <SubtaskForm taskId={task.id} />
+                          {taskSubtasks.length ? (
+                            taskSubtasks.map((subtask) => (
+                              <div
+                                key={subtask.id}
+                                className="rounded-2xl border border-slate-200/70 bg-slate-50/60 p-4"
+                              >
+                                <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                  <div>
+                                    <p className="font-medium text-slate-950">{subtask.title}</p>
+                                    <p className="text-sm text-slate-600">
+                                      {subtask.startDate} to {subtask.endDate}
+                                    </p>
+                                  </div>
+                                  <Badge tone={subtask.status === "COMPLETED" ? "success" : "info"}>
+                                    {subtask.status.replaceAll("_", " ")}
+                                  </Badge>
+                                </div>
+                                <p className="mt-2 text-sm text-slate-600">
+                                  {formatHours(subtask.actualHours)} / {formatHours(subtask.estimatedHours)}
+                                </p>
+                                <div className="mt-4">
+                                  <SubtaskForm subtask={subtask} taskId={task.id} />
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="rounded-2xl border border-dashed border-slate-200/80 p-4 text-sm text-slate-500">
+                              No subtasks added yet.
+                            </div>
+                          )}
+                        </div>
+                      </details>
+                      <details className="mt-4 rounded-2xl border border-slate-200/80 bg-white p-4">
+                        <summary className="cursor-pointer text-sm font-medium text-slate-700">
+                          Comments ({taskComments.length})
+                        </summary>
+                        <div className="mt-4 space-y-4">
+                          <EntityCommentForm
+                            entityId={task.id}
+                            entityType="TASK"
+                            revalidateTarget="/tasks"
+                          />
+                          {taskComments.length ? (
+                            taskComments.map((comment) => {
+                              const author = users.find((user) => user.id === comment.authorId);
+                              return (
+                                <div key={comment.id} className="rounded-2xl border border-slate-200/70 p-4 text-sm">
+                                  <p className="font-medium text-slate-950">{author?.name ?? "Unknown user"}</p>
+                                  <p className="mt-1 text-slate-600">{comment.message}</p>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div className="rounded-2xl border border-dashed border-slate-200/80 p-4 text-sm text-slate-500">
+                              No comments added yet.
+                            </div>
+                          )}
                         </div>
                       </details>
                     </td>

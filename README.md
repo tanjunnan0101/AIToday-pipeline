@@ -54,14 +54,20 @@ Copy `.env.example` into `.env.local` and fill in:
 - `DATABASE_URL`
 - `DIRECT_URL`
 - `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_STORAGE_BUCKET`
 - `RESEND_API_KEY`
-- `SESSION_SECRET`
 - `NEXT_PUBLIC_APP_URL`
 - `NEXT_PUBLIC_GANTT_PROVIDER`
 - `GANTT_LICENSE_KEY`
+
+For a local login that matches the seeded internal `ADMIN` role, create a Supabase Auth user with the same email as the demo admin record:
+
+1. Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` in `.env.local`.
+2. Run `set ADMIN_PASSWORD=your-secure-password` in PowerShell or Command Prompt for the current shell.
+3. Run `npm run auth:bootstrap-admin`.
+4. Sign in with `admin@aitoday.sg` and the password you just set.
 
 ## Commands
 
@@ -84,14 +90,18 @@ npm run build
 
 ## Auth notes
 
-- `/login` now uses signed cookie sessions for the demo environment.
-- Set `SESSION_SECRET` before sharing the app beyond local development.
-- The auth surface is structured so Supabase Auth can replace the demo credential check without changing the route protection flow.
+- `/login` now signs in through Supabase Auth using server-side cookie handling from `@supabase/ssr`.
+- Route protection and token refresh run through [repo/proxy.ts](C:/Users/tanju/Documents/Codex/2026-06-15/files-mentioned-by-the-user-aitoday/repo/proxy.ts).
+- Known internal users still inherit their display name and role from the app's seeded user records by matching email.
+
+## Storage notes
+
+- Document uploads now send the file through the server and write version objects into `SUPABASE_STORAGE_BUCKET` when Supabase storage credentials are configured.
+- Document version rows persist the Storage object path, which keeps private-bucket serving options open for a later download layer.
 
 ## Next build steps
 
 - Replace the demo data layer with Prisma-powered DAL functions.
-- Wire Supabase Auth into the `/login` flow and route authorization.
 - Add persistent document upload handlers using Supabase Storage.
 - Replace the lightweight timeline adapter with the final Gantt provider.
 - Add mutation surfaces with Server Actions and protected Route Handlers for CRUD flows.

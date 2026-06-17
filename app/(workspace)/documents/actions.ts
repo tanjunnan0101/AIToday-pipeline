@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { requireSession } from "@/lib/auth";
+import { requireInternalSession } from "@/lib/auth";
 import { createDocumentRecord, replaceDocumentVersionRecord } from "@/lib/data-access";
 import { documentStatuses, documentTypes } from "@/lib/domain";
 
@@ -35,7 +35,7 @@ export async function createDocumentAction(
   _previousState: CreateDocumentFormState,
   formData: FormData,
 ) {
-  const session = await requireSession();
+  const session = await requireInternalSession();
   const file = formData.get("file");
   const parsed = createDocumentSchema.safeParse({
     clientId: formData.get("clientId"),
@@ -69,6 +69,7 @@ export async function createDocumentAction(
       ...parsed.data,
       stageId: parsed.data.stageId || undefined,
       uploadedById: session.id,
+      file,
       fileName: file.name,
       contentType: file.type || "application/octet-stream",
       sizeBytes: file.size,
@@ -93,7 +94,7 @@ export async function replaceDocumentVersionAction(
   _previousState: CreateDocumentFormState,
   formData: FormData,
 ) {
-  const session = await requireSession();
+  const session = await requireInternalSession();
   const file = formData.get("file");
   const parsed = replaceDocumentVersionSchema.safeParse({
     documentId: formData.get("documentId"),
@@ -123,6 +124,7 @@ export async function replaceDocumentVersionAction(
     await replaceDocumentVersionRecord({
       ...parsed.data,
       uploadedById: session.id,
+      file,
       fileName: file.name,
       contentType: file.type || "application/octet-stream",
       sizeBytes: file.size,

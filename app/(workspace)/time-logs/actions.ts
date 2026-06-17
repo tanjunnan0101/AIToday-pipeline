@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { requireSession } from "@/lib/auth";
+import { requireInternalSession } from "@/lib/auth";
 import { createTimeLogRecord } from "@/lib/data-access";
 
 const createTimeLogSchema = z.object({
@@ -27,7 +27,7 @@ export async function createTimeLogAction(
   _previousState: CreateTimeLogFormState,
   formData: FormData,
 ) {
-  await requireSession();
+  await requireInternalSession();
 
   const parsed = createTimeLogSchema.safeParse({
     clientId: formData.get("clientId"),

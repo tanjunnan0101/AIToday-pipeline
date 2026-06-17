@@ -185,6 +185,20 @@ async function main() {
     ),
   });
 
+  await prisma.subtask.createMany({
+    data: appData.subtasks.map((subtask) => ({
+      id: subtask.id,
+      taskId: subtask.taskId,
+      title: subtask.title,
+      status: subtask.status,
+      startDate: new Date(subtask.startDate),
+      endDate: new Date(subtask.endDate),
+      estimatedHours: subtask.estimatedHours,
+      actualHours: subtask.actualHours,
+      completionPercent: subtask.completionPercent,
+    })),
+  });
+
   await prisma.document.createMany({
     data: appData.documents.map((document) => ({
       id: document.id,

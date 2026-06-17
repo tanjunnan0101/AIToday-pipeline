@@ -3,10 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { requireSession } from "@/lib/auth";
+import { requireInternalSession } from "@/lib/auth";
 import { createImplementationPlanRecord } from "@/lib/data-access";
 import { approvalStatuses, implementationPlanStatuses } from "@/lib/domain";
-import { demoStorageProvider } from "@/lib/services/storage";
+import { storageProvider } from "@/lib/services/storage";
 
 const createImplementationPlanSchema = z.object({
   clientId: z.string().min(1, "Choose a client."),
@@ -29,7 +29,7 @@ export async function createImplementationPlanAction(
   _previousState: CreateImplementationPlanFormState,
   formData: FormData,
 ) {
-  const session = await requireSession();
+  const session = await requireInternalSession();
   const file = formData.get("file");
   const parsed = createImplementationPlanSchema.safeParse({
     clientId: formData.get("clientId"),
@@ -62,12 +62,13 @@ export async function createImplementationPlanAction(
       };
     }
 
-    const upload = await demoStorageProvider.upload({
+    const upload = await storageProvider.upload({
       path: `clients/${parsed.data.clientId}/implementation-plans`,
       fileName: file.name,
       contentType: file.type || "application/octet-stream",
+      file,
     });
-    sourceReference = upload.publicUrl;
+    sourceReference = upload.objectPath;
   } else if (!sourceReference) {
     return {
       message: "Add the Google Drive link or external URL.",

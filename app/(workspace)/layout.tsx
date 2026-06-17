@@ -4,14 +4,14 @@ import { headers } from "next/headers";
 
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { Topbar } from "@/components/layout/topbar";
-import { requireSession } from "@/lib/auth";
+import { requireInternalSession } from "@/lib/auth";
 
 export default async function WorkspaceLayout({
   children,
 }: {
   children: ReactNode;
 }) {
-  const session = await requireSession();
+  const session = await requireInternalSession();
   const headerList = await headers();
   const pathname = headerList.get("x-current-path") ?? "/dashboard";
 

@@ -15,6 +15,7 @@ import type {
   InvoiceRecord,
   PipelineStage,
   ProposalRecord,
+  Subtask,
   Task,
   User,
 } from "@/lib/domain";
@@ -22,7 +23,7 @@ import { env } from "@/lib/env";
 import { getPrismaClient } from "@/lib/prisma";
 import { buildClientStages } from "@/lib/pipeline";
 import { getRuntimeStore } from "@/lib/runtime-store";
-import { demoStorageProvider } from "@/lib/services/storage";
+import { storageProvider } from "@/lib/services/storage";
 
 export type DashboardTaskView = {
   id: string;
@@ -77,8 +78,31 @@ export type ReportsView = {
   metrics: DashboardView["metrics"];
   workload: Array<{
     userId: string;
+    name: string;
     role: User["role"];
     assignedTasks: number;
+    blockedTasks: number;
+    loggedHours: number;
+  }>;
+  clientSummaries: Array<{
+    clientId: string;
+    companyName: string;
+    status: Client["status"];
+    projectValue: number;
+    completionPercent: number;
+    blockedTasks: number;
+    pendingClientDocuments: number;
+    handoverStatus: HandoverRecord["signOffStatus"] | "NOT_STARTED";
+  }>;
+  handoverSummaries: Array<{
+    handoverId: string;
+    clientId: string;
+    companyName: string;
+    signOffStatus: HandoverRecord["signOffStatus"];
+    walkthroughDate: string;
+    signedBy?: string;
+    pendingActionsCount: number;
+    checklistCount: number;
   }>;
   auditLogs: AuditLogRecord[];
 };
@@ -96,6 +120,19 @@ export type CreateClientInput = {
   notes: string;
 };
 
+export type CreateUserInput = {
+  name: string;
+  email: string;
+  role: User["role"];
+  capacityHours: number;
+};
+
+export type UpdateUserInput = {
+  userId: string;
+  role: User["role"];
+  capacityHours: number;
+};
+
 export type CreateDocumentInput = {
   clientId: string;
   stageId?: string;
@@ -108,6 +145,7 @@ export type CreateDocumentInput = {
   uploadedById: string;
   notes: string;
   clientFacing: boolean;
+  file: File;
   fileName: string;
   contentType: string;
   sizeBytes?: number;
@@ -150,6 +188,21 @@ export type CreateTaskInput = {
   clientFacing: boolean;
 };
 
+export type CreateSubtaskInput = {
+  taskId: string;
+  title: string;
+  status: Subtask["status"];
+  startDate: string;
+  endDate: string;
+  estimatedHours: number;
+  actualHours: number;
+  completionPercent: number;
+};
+
+export type UpdateSubtaskInput = CreateSubtaskInput & {
+  subtaskId: string;
+};
+
 export type CreateCommentInput = {
   entityType: "CLIENT" | "TASK" | "DOCUMENT" | "IMPLEMENTATION_PLAN";
   entityId: string;
@@ -174,16 +227,58 @@ export type UpdateTaskInput = CreateTaskInput & {
   taskId: string;
 };
 
+export type UpdateTaskTimelineInput = {
+  taskId: string;
+  startDate: string;
+  endDate: string;
+  completionPercent: number;
+  status: Task["status"];
+  dependencyIds: string[];
+};
+
+export type UpdateHandoverRecordInput = {
+  handoverId: string;
+  checklist: string[];
+  signOffStatus: HandoverRecord["signOffStatus"];
+  walkthroughDate: string;
+  signedBy?: string;
+  signOffDate?: string;
+  pendingActions: string[];
+  closureNotes?: string;
+};
+
 export type ReplaceDocumentVersionInput = {
   documentId: string;
   version: string;
   status: DocumentRecord["status"];
   notes: string;
   uploadedById: string;
+  file: File;
   fileName: string;
   contentType: string;
   sizeBytes?: number;
   clientFacing: boolean;
+};
+
+export type UpdateNotificationReadInput = {
+  notificationId: string;
+  read: boolean;
+};
+
+export type UpdateDocumentStatusInput = {
+  documentId: string;
+  status: DocumentRecord["status"];
+};
+
+export type UpdateImplementationPlanStatusInput = {
+  planId: string;
+  status: ImplementationPlan["status"];
+  approvalStatus: ImplementationPlan["approvalStatus"];
+};
+
+export type UpdateContactPortalAccessInput = {
+  contactId: string;
+  portalAccess: boolean;
 };
 
 export type CreateProposalInput = {
@@ -214,6 +309,13 @@ export type CreateGrantInput = {
   submissionStatus: GrantRecord["submissionStatus"];
   approvalStatus: GrantRecord["approvalStatus"];
   remarks: string;
+};
+
+export type FileAccessAuditInput = {
+  actorId: string;
+  action: string;
+  entityType: string;
+  entityId: string;
 };
 
 function hasPrismaSource() {
@@ -330,6 +432,30 @@ function mapPrismaTask(record: {
   };
 }
 
+function mapPrismaSubtask(record: {
+  id: string;
+  taskId: string;
+  title: string;
+  status: Subtask["status"];
+  startDate: Date | null;
+  endDate: Date | null;
+  estimatedHours: Prisma.Decimal | null;
+  actualHours: Prisma.Decimal | null;
+  completionPercent: number;
+}): Subtask {
+  return {
+    id: record.id,
+    taskId: record.taskId,
+    title: record.title,
+    status: record.status,
+    startDate: normalizeDate(record.startDate),
+    endDate: normalizeDate(record.endDate),
+    estimatedHours: Number(record.estimatedHours ?? 0),
+    actualHours: Number(record.actualHours ?? 0),
+    completionPercent: record.completionPercent,
+  };
+}
+
 function mapPrismaDocument(record: {
   id: string;
   clientId: string;
@@ -340,7 +466,7 @@ function mapPrismaDocument(record: {
   type: DocumentRecord["type"];
   status: DocumentRecord["status"];
   clientFacing: boolean;
-  currentVersion: { versionLabel: string } | null;
+  currentVersion: { versionLabel: string; storagePath: string } | null;
   updatedAt: Date;
 }): DocumentRecord {
   return {
@@ -356,6 +482,7 @@ function mapPrismaDocument(record: {
     uploadedAt: normalizeDate(record.updatedAt),
     uploadedById: "user-admin",
     clientFacing: record.clientFacing,
+    storageObjectPath: record.currentVersion?.storagePath ?? undefined,
   };
 }
 
@@ -412,15 +539,18 @@ function mapPrismaContact(record: {
 function mapPrismaHandover(record: {
   id: string;
   clientId: string;
+  checklist: Prisma.JsonValue | null;
   signOffStatus: HandoverRecord["signOffStatus"];
   walkthroughDate: Date | null;
   signedBy: string | null;
   signOffDate: Date | null;
   pendingActions: Prisma.JsonValue | null;
+  closureNotes: string | null;
 }): HandoverRecord {
   return {
     id: record.id,
     clientId: record.clientId,
+    checklist: Array.isArray(record.checklist) ? record.checklist.map(String) : [],
     signOffStatus: record.signOffStatus,
     walkthroughDate: normalizeDate(record.walkthroughDate),
     signedBy: record.signedBy ?? undefined,
@@ -428,6 +558,7 @@ function mapPrismaHandover(record: {
     pendingActions: Array.isArray(record.pendingActions)
       ? record.pendingActions.map(String)
       : [],
+    closureNotes: record.closureNotes ?? undefined,
   };
 }
 
@@ -839,6 +970,46 @@ export async function listTasks() {
   }
 }
 
+export async function listSubtasks() {
+  if (!hasPrismaSource()) {
+    return [...getFallbackData().subtasks];
+  }
+
+  try {
+    const prisma = getPrismaClient();
+    const subtasks = await prisma.subtask.findMany({
+      orderBy: {
+        updatedAt: "desc",
+      },
+    });
+
+    return subtasks.map(mapPrismaSubtask);
+  } catch {
+    return [...getFallbackData().subtasks];
+  }
+}
+
+export async function getTaskById(taskId: string) {
+  if (!hasPrismaSource()) {
+    return getFallbackData().tasks.find((task) => task.id === taskId);
+  }
+
+  try {
+    const prisma = getPrismaClient();
+    const task = await prisma.task.findUnique({
+      where: { id: taskId },
+      include: {
+        assignments: true,
+        dependenciesTo: true,
+      },
+    });
+
+    return task ? mapPrismaTask(task) : undefined;
+  } catch {
+    return getFallbackData().tasks.find((entry) => entry.id === taskId);
+  }
+}
+
 export async function listStages() {
   if (!hasPrismaSource()) {
     return [...getFallbackData().stages];
@@ -882,6 +1053,73 @@ export async function listDocuments() {
   }
 }
 
+export async function getDocumentById(documentId: string) {
+  if (!hasPrismaSource()) {
+    return getFallbackData().documents.find((document) => document.id === documentId);
+  }
+
+  try {
+    const prisma = getPrismaClient();
+    const document = await prisma.document.findUnique({
+      where: { id: documentId },
+      include: {
+        currentVersion: true,
+      },
+    });
+
+    return document ? mapPrismaDocument(document) : undefined;
+  } catch {
+    return getFallbackData().documents.find((entry) => entry.id === documentId);
+  }
+}
+
+export async function getImplementationPlanById(planId: string) {
+  if (!hasPrismaSource()) {
+    return getFallbackData().implementationPlans.find((plan) => plan.id === planId);
+  }
+
+  try {
+    const prisma = getPrismaClient();
+    const plan = await prisma.implementationPlan.findUnique({
+      where: { id: planId },
+    });
+
+    return plan ? mapPrismaPlan(plan) : undefined;
+  } catch {
+    return getFallbackData().implementationPlans.find((entry) => entry.id === planId);
+  }
+}
+
+export async function createAuditLogRecord(input: FileAccessAuditInput) {
+  if (hasPrismaSource()) {
+    try {
+      const prisma = getPrismaClient();
+      await prisma.auditLog.create({
+        data: {
+          id: `audit-${randomUUID()}`,
+          actorId: input.actorId,
+          action: input.action,
+          entityType: input.entityType,
+          entityId: input.entityId,
+        },
+      });
+      return;
+    } catch {
+      // Fall back to runtime storage when Prisma is unavailable.
+    }
+  }
+
+  const store = getFallbackData();
+  store.auditLogs.unshift({
+    id: `audit-${randomUUID()}`,
+    actorId: input.actorId,
+    action: input.action,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    createdAt: normalizeTimestamp(),
+  });
+}
+
 export async function listNotifications() {
   if (!hasPrismaSource()) {
     return [...getFallbackData().notifications];
@@ -892,6 +1130,158 @@ export async function listNotifications() {
   } catch {
     return [...getFallbackData().notifications];
   }
+}
+
+export async function listComments() {
+  if (!hasPrismaSource()) {
+    return [...getFallbackData().comments];
+  }
+
+  try {
+    const prisma = getPrismaClient();
+    const comments = await prisma.comment.findMany({
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return comments.map((comment) => ({
+      id: comment.id,
+      entityType: comment.entityType,
+      entityId: comment.entityId,
+      authorId: comment.authorId,
+      message: comment.message,
+      clientFacing: comment.clientFacing,
+      createdAt: comment.createdAt.toISOString(),
+    }));
+  } catch {
+    return [...getFallbackData().comments];
+  }
+}
+
+export async function updateNotificationReadState(input: UpdateNotificationReadInput) {
+  if (hasPrismaSource()) {
+    try {
+      const prisma = getPrismaClient();
+      const notification = await prisma.notification.update({
+        where: { id: input.notificationId },
+        data: {
+          read: input.read,
+        },
+      });
+
+      return {
+        id: notification.id,
+        userId: notification.userId,
+        title: notification.title,
+        body: notification.body,
+        createdAt: normalizeDate(notification.createdAt),
+        read: notification.read,
+      };
+    } catch {
+      // Fall back to runtime storage when Prisma is unavailable.
+    }
+  }
+
+  const store = getFallbackData();
+  const notification = store.notifications.find((entry) => entry.id === input.notificationId);
+
+  if (!notification) {
+    throw new Error("Notification not found.");
+  }
+
+  notification.read = input.read;
+  return notification;
+}
+
+export async function updateDocumentStatusRecord(input: UpdateDocumentStatusInput) {
+  if (hasPrismaSource()) {
+    try {
+      const prisma = getPrismaClient();
+      const document = await prisma.document.update({
+        where: { id: input.documentId },
+        data: {
+          status: input.status,
+        },
+        include: {
+          currentVersion: true,
+        },
+      });
+
+      return mapPrismaDocument(document);
+    } catch {
+      // Fall back to runtime storage when Prisma is unavailable.
+    }
+  }
+
+  const store = getFallbackData();
+  const document = store.documents.find((entry) => entry.id === input.documentId);
+  if (!document) {
+    throw new Error("Document not found.");
+  }
+
+  document.status = input.status;
+  return document;
+}
+
+export async function updateImplementationPlanStatusRecord(
+  input: UpdateImplementationPlanStatusInput,
+) {
+  if (hasPrismaSource()) {
+    try {
+      const prisma = getPrismaClient();
+      const plan = await prisma.implementationPlan.update({
+        where: { id: input.planId },
+        data: {
+          status: input.status,
+          approvalStatus: input.approvalStatus,
+        },
+      });
+
+      return mapPrismaPlan(plan);
+    } catch {
+      // Fall back to runtime storage when Prisma is unavailable.
+    }
+  }
+
+  const store = getFallbackData();
+  const plan = store.implementationPlans.find((entry) => entry.id === input.planId);
+  if (!plan) {
+    throw new Error("Implementation plan not found.");
+  }
+
+  plan.status = input.status;
+  plan.approvalStatus = input.approvalStatus;
+  return plan;
+}
+
+export async function updateContactPortalAccessRecord(
+  input: UpdateContactPortalAccessInput,
+) {
+  if (hasPrismaSource()) {
+    try {
+      const prisma = getPrismaClient();
+      const contact = await prisma.clientContact.update({
+        where: { id: input.contactId },
+        data: {
+          portalAccess: input.portalAccess,
+        },
+      });
+
+      return mapPrismaContact(contact);
+    } catch {
+      // Fall back to runtime storage when Prisma is unavailable.
+    }
+  }
+
+  const store = getFallbackData();
+  const contact = store.contacts.find((entry) => entry.id === input.contactId);
+  if (!contact) {
+    throw new Error("Contact not found.");
+  }
+
+  contact.portalAccess = input.portalAccess;
+  return contact;
 }
 
 export async function listTimeLogs() {
@@ -937,6 +1327,56 @@ export async function listHandovers() {
   }
 }
 
+export async function updateHandoverRecord(input: UpdateHandoverRecordInput) {
+  if (hasPrismaSource()) {
+    try {
+      const prisma = getPrismaClient();
+      const updatedRecord = await prisma.handoverRecord.update({
+        where: { id: input.handoverId },
+        data: {
+          checklist: input.checklist,
+          signOffStatus: input.signOffStatus,
+          walkthroughDate: input.walkthroughDate ? new Date(input.walkthroughDate) : null,
+          signedBy: input.signedBy || null,
+          signOffDate: input.signOffDate ? new Date(input.signOffDate) : null,
+          pendingActions: input.pendingActions,
+          closureNotes: input.closureNotes || null,
+        },
+      });
+
+      return mapPrismaHandover(updatedRecord);
+    } catch {
+      // Fall back to runtime storage when Prisma credentials are not yet usable.
+    }
+  }
+
+  const store = getFallbackData();
+  const handover = store.handovers.find((entry) => entry.id === input.handoverId);
+
+  if (!handover) {
+    throw new Error("Handover record not found.");
+  }
+
+  handover.checklist = input.checklist;
+  handover.signOffStatus = input.signOffStatus;
+  handover.walkthroughDate = input.walkthroughDate;
+  handover.signedBy = input.signedBy || undefined;
+  handover.signOffDate = input.signOffDate || undefined;
+  handover.pendingActions = input.pendingActions;
+  handover.closureNotes = input.closureNotes || undefined;
+
+  store.auditLogs.unshift({
+    id: `audit-${randomUUID()}`,
+    actorId: handover.signedBy ?? "user-pm",
+    action: "HANDOVER_UPDATED",
+    entityType: "HANDOVER",
+    entityId: handover.id,
+    createdAt: normalizeTimestamp(),
+  });
+
+  return handover;
+}
+
 export async function getDashboardView() {
   if (!hasPrismaSource()) {
     return buildDashboardView(getFallbackData());
@@ -973,6 +1413,7 @@ export async function getDashboardView() {
       contacts: [],
       stages: stages.map(mapPrismaStage),
       tasks: tasks.map(mapPrismaTask),
+      subtasks: [],
       documents: documents.map(mapPrismaDocument),
       implementationPlans: implementationPlans.map(mapPrismaPlan),
       timeLogs: timeLogs.map((log) => ({
@@ -1083,19 +1524,66 @@ export async function getPlanWorkspaceById(planId: string): Promise<PlanWorkspac
 }
 
 export async function getReportsView(): Promise<ReportsView> {
-  const [dashboard, users, tasks, auditLogs] = await Promise.all([
+  const [dashboard, users, tasks, auditLogs, clients, documents, handovers, timeLogs] = await Promise.all([
     getDashboardView(),
     listUsers(),
     listTasks(),
     listAuditLogs(),
+    listClients(),
+    listDocuments(),
+    listHandovers(),
+    listTimeLogs(),
   ]);
 
   return {
     metrics: dashboard.metrics,
     workload: users.map((user) => ({
       userId: user.id,
+      name: user.name,
       role: user.role,
       assignedTasks: tasks.filter((task) => task.primaryOwnerId === user.id).length,
+      blockedTasks: tasks.filter((task) => task.primaryOwnerId === user.id && task.blocker).length,
+      loggedHours: timeLogs
+        .filter((log) => log.userId === user.id)
+        .reduce((sum, log) => sum + log.hours, 0),
+    })),
+    clientSummaries: clients.map((client) => {
+      const clientTasks = tasks.filter((task) => task.clientId === client.id);
+      const handover = handovers.find((entry) => entry.clientId === client.id);
+      const clientDocuments = documents.filter(
+        (document) => document.clientId === client.id && document.clientFacing,
+      );
+
+      return {
+        clientId: client.id,
+        companyName: client.companyName,
+        status: client.status,
+        projectValue: client.projectValue,
+        completionPercent: clientTasks.length
+          ? Math.round(
+              clientTasks.reduce((sum, task) => sum + task.completionPercent, 0) /
+                clientTasks.length,
+            )
+          : 0,
+        blockedTasks: clientTasks.filter((task) => task.blocker).length,
+        pendingClientDocuments: clientDocuments.filter(
+          (document) =>
+            document.status !== "CLIENT_APPROVED" && document.status !== "APPROVED",
+        ).length,
+        handoverStatus: handover?.signOffStatus ?? "NOT_STARTED",
+      };
+    }),
+    handoverSummaries: handovers.map((handover) => ({
+      handoverId: handover.id,
+      clientId: handover.clientId,
+      companyName:
+        clients.find((client) => client.id === handover.clientId)?.companyName ??
+        handover.clientId,
+      signOffStatus: handover.signOffStatus,
+      walkthroughDate: handover.walkthroughDate,
+      signedBy: handover.signedBy,
+      pendingActionsCount: handover.pendingActions.length,
+      checklistCount: handover.checklist.length,
     })),
     auditLogs,
   };
@@ -1167,11 +1655,124 @@ export async function createClientWithStages(input: CreateClientInput) {
   return client;
 }
 
+export async function createUserRecord(input: CreateUserInput) {
+  if (hasPrismaSource()) {
+    try {
+      const prisma = getPrismaClient();
+      const user = await prisma.user.create({
+        data: {
+          id: `user-${randomUUID()}`,
+          name: input.name,
+          email: input.email,
+          role: input.role,
+          capacityHours: input.capacityHours,
+          avatar: input.name
+            .split(/\s+/)
+            .map((segment) => segment[0])
+            .join("")
+            .slice(0, 2)
+            .toUpperCase(),
+        },
+      });
+
+      return {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        avatar: user.avatar ?? "",
+        capacityHours: user.capacityHours,
+      } satisfies User;
+    } catch {
+      // Fall back to runtime storage when Prisma credentials are not yet usable.
+    }
+  }
+
+  const store = getFallbackData();
+  if (store.users.some((entry) => entry.email.toLowerCase() === input.email.toLowerCase())) {
+    throw new Error("A user with this email already exists.");
+  }
+
+  const user: User = {
+    id: `user-${randomUUID()}`,
+    name: input.name,
+    email: input.email,
+    role: input.role,
+    avatar: input.name
+      .split(/\s+/)
+      .map((segment) => segment[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase(),
+    capacityHours: input.capacityHours,
+  };
+
+  store.users.push(user);
+  store.users.sort((left, right) => left.name.localeCompare(right.name));
+  store.auditLogs.unshift({
+    id: `audit-${randomUUID()}`,
+    actorId: user.id,
+    action: "USER_CREATED",
+    entityType: "USER",
+    entityId: user.id,
+    createdAt: normalizeTimestamp(),
+  });
+
+  return user;
+}
+
+export async function updateUserRecord(input: UpdateUserInput) {
+  if (hasPrismaSource()) {
+    try {
+      const prisma = getPrismaClient();
+      const user = await prisma.user.update({
+        where: { id: input.userId },
+        data: {
+          role: input.role,
+          capacityHours: input.capacityHours,
+        },
+      });
+
+      return {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        avatar: user.avatar ?? "",
+        capacityHours: user.capacityHours,
+      } satisfies User;
+    } catch {
+      // Fall back to runtime storage when Prisma credentials are not yet usable.
+    }
+  }
+
+  const store = getFallbackData();
+  const user = store.users.find((entry) => entry.id === input.userId);
+
+  if (!user) {
+    throw new Error("User not found.");
+  }
+
+  user.role = input.role;
+  user.capacityHours = input.capacityHours;
+  store.auditLogs.unshift({
+    id: `audit-${randomUUID()}`,
+    actorId: user.id,
+    action: "USER_UPDATED",
+    entityType: "USER",
+    entityId: user.id,
+    createdAt: normalizeTimestamp(),
+  });
+
+  return user;
+}
+
 export async function createDocumentRecord(input: CreateDocumentInput) {
-  const upload = await demoStorageProvider.upload({
+  const upload = await storageProvider.upload({
     path: `clients/${input.clientId}/documents`,
     fileName: input.fileName,
     contentType: input.contentType,
+    file: input.file,
   });
 
   if (hasPrismaSource()) {
@@ -1208,7 +1809,7 @@ export async function createDocumentRecord(input: CreateDocumentInput) {
             id: versionId,
             documentId,
             versionLabel: input.version,
-            storagePath: upload.publicUrl,
+            storagePath: upload.objectPath,
             mimeType: input.contentType,
             sizeBytes: input.sizeBytes,
             status: input.status,
@@ -1238,6 +1839,7 @@ export async function createDocumentRecord(input: CreateDocumentInput) {
         uploadedAt: normalizeToday(),
         uploadedById: input.uploadedById,
         clientFacing: input.clientFacing,
+        storageObjectPath: upload.objectPath,
       } satisfies DocumentRecord;
     } catch {
       // Fall back to runtime storage when Prisma credentials or relations are unavailable.
@@ -1263,6 +1865,7 @@ export async function createDocumentRecord(input: CreateDocumentInput) {
     uploadedAt: normalizeToday(),
     uploadedById: input.uploadedById,
     clientFacing: input.clientFacing,
+    storageObjectPath: upload.objectPath,
   };
 
   store.documents.unshift(document);
@@ -1480,6 +2083,120 @@ export async function createTaskRecord(input: CreateTaskInput) {
   });
 
   return task;
+}
+
+export async function createSubtaskRecord(input: CreateSubtaskInput) {
+  if (hasPrismaSource()) {
+    try {
+      const prisma = getPrismaClient();
+      const task = await prisma.task.findUnique({
+        where: { id: input.taskId },
+      });
+
+      if (!task) {
+        throw new Error("Task not found.");
+      }
+
+      const subtask = await prisma.subtask.create({
+        data: {
+          id: `subtask-${randomUUID()}`,
+          taskId: input.taskId,
+          title: input.title,
+          status: input.status,
+          startDate: input.startDate ? new Date(input.startDate) : null,
+          endDate: input.endDate ? new Date(input.endDate) : null,
+          estimatedHours: input.estimatedHours,
+          actualHours: input.actualHours,
+          completionPercent: input.completionPercent,
+        },
+      });
+
+      return mapPrismaSubtask(subtask);
+    } catch {
+      // Fall back to runtime storage when Prisma credentials are not yet usable.
+    }
+  }
+
+  const store = getFallbackData();
+  const task = store.tasks.find((entry) => entry.id === input.taskId);
+
+  if (!task) {
+    throw new Error("Task not found.");
+  }
+
+  const subtask: Subtask = {
+    id: `subtask-${randomUUID()}`,
+    taskId: input.taskId,
+    title: input.title,
+    status: input.status,
+    startDate: input.startDate,
+    endDate: input.endDate,
+    estimatedHours: input.estimatedHours,
+    actualHours: input.actualHours,
+    completionPercent: input.completionPercent,
+  };
+
+  store.subtasks.unshift(subtask);
+  store.auditLogs.unshift({
+    id: `audit-${randomUUID()}`,
+    actorId: task.primaryOwnerId,
+    action: "SUBTASK_CREATED",
+    entityType: "SUBTASK",
+    entityId: subtask.id,
+    createdAt: normalizeTimestamp(),
+  });
+
+  return subtask;
+}
+
+export async function updateSubtaskRecord(input: UpdateSubtaskInput) {
+  if (hasPrismaSource()) {
+    try {
+      const prisma = getPrismaClient();
+      const subtask = await prisma.subtask.update({
+        where: { id: input.subtaskId },
+        data: {
+          title: input.title,
+          status: input.status,
+          startDate: input.startDate ? new Date(input.startDate) : null,
+          endDate: input.endDate ? new Date(input.endDate) : null,
+          estimatedHours: input.estimatedHours,
+          actualHours: input.actualHours,
+          completionPercent: input.completionPercent,
+        },
+      });
+
+      return mapPrismaSubtask(subtask);
+    } catch {
+      // Fall back to runtime storage when Prisma credentials are not yet usable.
+    }
+  }
+
+  const store = getFallbackData();
+  const subtask = store.subtasks.find((entry) => entry.id === input.subtaskId);
+
+  if (!subtask) {
+    throw new Error("Subtask not found.");
+  }
+
+  subtask.title = input.title;
+  subtask.status = input.status;
+  subtask.startDate = input.startDate;
+  subtask.endDate = input.endDate;
+  subtask.estimatedHours = input.estimatedHours;
+  subtask.actualHours = input.actualHours;
+  subtask.completionPercent = input.completionPercent;
+
+  store.auditLogs.unshift({
+    id: `audit-${randomUUID()}`,
+    actorId: "user-pm",
+    action: "SUBTASK_UPDATED",
+    entityType: "SUBTASK",
+    entityId: subtask.id,
+    createdAt: normalizeTimestamp(),
+  });
+
+  return subtask;
 }
 
 export async function createCommentRecord(input: CreateCommentInput) {
@@ -1758,6 +2475,89 @@ export async function updateTaskRecord(input: UpdateTaskInput) {
   return task;
 }
 
+export async function updateTaskTimelineRecord(input: UpdateTaskTimelineInput) {
+  if (hasPrismaSource()) {
+    try {
+      const prisma = getPrismaClient();
+      const task = await prisma.task.findUnique({
+        where: { id: input.taskId },
+        include: {
+          assignments: true,
+          dependenciesTo: true,
+        },
+      });
+
+      if (!task) {
+        throw new Error("Task not found.");
+      }
+
+      const updatedTask = await prisma.$transaction(async (tx) => {
+        await tx.taskDependency.deleteMany({
+          where: { successorId: input.taskId },
+        });
+
+        return tx.task.update({
+          where: { id: input.taskId },
+          data: {
+            startDate: input.startDate ? new Date(input.startDate) : null,
+            endDate: input.endDate ? new Date(input.endDate) : null,
+            completionPercent: input.completionPercent,
+            status: input.status,
+            blocker: input.status === "BLOCKED",
+            dependenciesTo: input.dependencyIds.length
+              ? {
+                  create: input.dependencyIds.map((dependencyId) => ({
+                    predecessorId: dependencyId,
+                  })),
+                }
+              : undefined,
+          },
+          include: {
+            assignments: true,
+            dependenciesTo: true,
+          },
+        });
+      });
+
+      return mapPrismaTask(updatedTask);
+    } catch {
+      // Fall back to runtime storage when Prisma credentials are not yet usable.
+    }
+  }
+
+  const store = getFallbackData();
+  const task = store.tasks.find((entry) => entry.id === input.taskId);
+
+  if (!task) {
+    throw new Error("Task not found.");
+  }
+
+  assertDependencyTasksBelongToClient(
+    store,
+    task.clientId,
+    task.id,
+    input.dependencyIds,
+  );
+
+  task.startDate = input.startDate;
+  task.endDate = input.endDate;
+  task.completionPercent = input.completionPercent;
+  task.status = input.status;
+  task.blocker = input.status === "BLOCKED";
+  task.dependencyIds = input.dependencyIds;
+
+  store.auditLogs.unshift({
+    id: `audit-${randomUUID()}`,
+    actorId: task.primaryOwnerId,
+    action: "TASK_TIMELINE_UPDATED",
+    entityType: "TASK",
+    entityId: task.id,
+    createdAt: normalizeTimestamp(),
+  });
+
+  return task;
+}
+
 export async function deleteTaskRecord(taskId: string) {
   if (hasPrismaSource()) {
     try {
@@ -1779,6 +2579,7 @@ export async function deleteTaskRecord(taskId: string) {
   }
 
   const [task] = store.tasks.splice(taskIndex, 1);
+  store.subtasks = store.subtasks.filter((subtask) => subtask.taskId !== taskId);
   store.timeLogs = store.timeLogs.filter((log) => log.taskId !== taskId);
   store.comments = store.comments.filter(
     (comment) => !(comment.entityType === "TASK" && comment.entityId === taskId),
@@ -1805,10 +2606,11 @@ export async function replaceDocumentVersionRecord(input: ReplaceDocumentVersion
         throw new Error("Document not found.");
       }
 
-      const upload = await demoStorageProvider.upload({
+      const upload = await storageProvider.upload({
         path: `clients/${document.clientId}/documents/${document.id}`,
         fileName: input.fileName,
         contentType: input.contentType,
+        file: input.file,
       });
 
       const versionId = `document-version-${randomUUID()}`;
@@ -1818,7 +2620,7 @@ export async function replaceDocumentVersionRecord(input: ReplaceDocumentVersion
             id: versionId,
             documentId: document.id,
             versionLabel: input.version,
-            storagePath: upload.publicUrl,
+            storagePath: upload.objectPath,
             mimeType: input.contentType,
             sizeBytes: input.sizeBytes,
             status: input.status,
@@ -1850,6 +2652,7 @@ export async function replaceDocumentVersionRecord(input: ReplaceDocumentVersion
         uploadedAt: normalizeToday(),
         uploadedById: input.uploadedById,
         clientFacing: input.clientFacing,
+        storageObjectPath: upload.objectPath,
       } satisfies DocumentRecord;
     } catch {
       // Fall back to runtime storage when Prisma credentials are not yet usable.
@@ -1863,11 +2666,19 @@ export async function replaceDocumentVersionRecord(input: ReplaceDocumentVersion
     throw new Error("Document not found.");
   }
 
+  const upload = await storageProvider.upload({
+    path: `clients/${document.clientId}/documents/${document.id}`,
+    fileName: input.fileName,
+    contentType: input.contentType,
+    file: input.file,
+  });
+
   document.version = input.version;
   document.status = input.status;
   document.uploadedAt = normalizeToday();
   document.uploadedById = input.uploadedById;
   document.clientFacing = input.clientFacing;
+  document.storageObjectPath = upload.objectPath;
 
   store.auditLogs.unshift({
     id: `audit-${randomUUID()}`,

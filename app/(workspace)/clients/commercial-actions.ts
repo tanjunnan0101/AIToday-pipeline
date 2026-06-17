@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { requireSession } from "@/lib/auth";
+import { requireInternalSession } from "@/lib/auth";
 import {
   createGrantRecord,
   createInvoiceRecord,
@@ -50,7 +50,7 @@ export async function createProposalAction(
   _previousState: CommercialFormState,
   formData: FormData,
 ) {
-  await requireSession();
+  await requireInternalSession();
   const parsed = createProposalSchema.safeParse({
     clientId: formData.get("clientId"),
     documentId: formData.get("documentId"),
@@ -74,7 +74,7 @@ export async function createInvoiceAction(
   _previousState: CommercialFormState,
   formData: FormData,
 ) {
-  await requireSession();
+  await requireInternalSession();
   const parsed = createInvoiceSchema.safeParse({
     clientId: formData.get("clientId"),
     documentId: formData.get("documentId"),
@@ -100,7 +100,7 @@ export async function createGrantAction(
   _previousState: CommercialFormState,
   formData: FormData,
 ) {
-  await requireSession();
+  await requireInternalSession();
   const parsed = createGrantSchema.safeParse({
     clientId: formData.get("clientId"),
     proposalDocumentId: formData.get("proposalDocumentId"),

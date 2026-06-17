@@ -8,21 +8,37 @@ import {
   createImplementationPlanRecord,
   createInvoiceRecord,
   createProposalRecord,
+  createSubtaskRecord,
+  createUserRecord,
   createTaskRecord,
   createTimeLogRecord,
   deleteTaskRecord,
+  getReportsView,
   replaceDocumentVersionRecord,
+  updateHandoverRecord,
+  updateNotificationReadState,
+  updateSubtaskRecord,
   updateTaskRecord,
+  updateTaskTimelineRecord,
   updateTaskStatus,
+  updateUserRecord,
 } from "@/lib/data-access";
 import { appData } from "@/lib/demo-data";
-import { filterPortalDocuments, filterPortalTasks } from "@/lib/permissions";
+import {
+  canAccessDocument,
+  filterPortalDocuments,
+  filterPortalTasks,
+} from "@/lib/permissions";
 import {
   buildClientStages,
   isValidDevelopmentStage,
   stageTemplates,
 } from "@/lib/pipeline";
 import { resetRuntimeStore } from "@/lib/runtime-store";
+
+function makeFile(name: string, type: string, contents = "test-file") {
+  return new File([contents], name, { type });
+}
 
 describe("pipeline rules", () => {
   it("auto-creates nine default stages", () => {
@@ -52,6 +68,30 @@ describe("client portal visibility", () => {
     const tasks = filterPortalTasks(appData.tasks);
     expect(tasks.every((task) => task.clientFacing)).toBe(true);
   });
+
+  it("allows anonymous access only to portal-safe documents", () => {
+    const portalDocument = appData.documents.find((document) => document.id === "doc-1");
+    const internalDocument = appData.documents.find((document) => document.id === "doc-2");
+
+    expect(portalDocument).toBeDefined();
+    expect(internalDocument).toBeDefined();
+    expect(canAccessDocument(portalDocument!, null)).toBe(true);
+    expect(canAccessDocument(internalDocument!, null)).toBe(false);
+  });
+
+  it("blocks client viewers from internal-only documents", () => {
+    const internalDocument = appData.documents.find((document) => document.id === "doc-2");
+
+    expect(internalDocument).toBeDefined();
+    expect(
+      canAccessDocument(internalDocument!, {
+        id: "user-client",
+        email: "portal@kiuhair.com",
+        name: "Portal User",
+        role: "CLIENT_VIEWER",
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("client creation", () => {
@@ -76,6 +116,38 @@ describe("client creation", () => {
     expect(store.clients).toHaveLength(beforeClients + 1);
     expect(store.stages).toHaveLength(beforeStages + 9);
     expect(store.stages.filter((stage) => stage.clientId === client.id)).toHaveLength(9);
+  });
+});
+
+describe("user administration", () => {
+  it("creates a user in fallback mode", async () => {
+    const store = resetRuntimeStore();
+    const beforeUsers = store.users.length;
+
+    const user = await createUserRecord({
+      name: "Maya Koh",
+      email: "maya@aitoday.sg",
+      role: "CONSULTANT",
+      capacityHours: 37,
+    });
+
+    expect(store.users).toHaveLength(beforeUsers + 1);
+    expect(store.users.some((entry) => entry.id === user.id)).toBe(true);
+    expect(store.users.find((entry) => entry.id === user.id)?.role).toBe("CONSULTANT");
+  });
+
+  it("updates a user role and capacity in fallback mode", async () => {
+    const store = resetRuntimeStore();
+
+    await updateUserRecord({
+      userId: "user-dev",
+      role: "PROJECT_MANAGER",
+      capacityHours: 45,
+    });
+
+    const user = store.users.find((entry) => entry.id === "user-dev");
+    expect(user?.role).toBe("PROJECT_MANAGER");
+    expect(user?.capacityHours).toBe(45);
   });
 });
 
@@ -115,6 +187,7 @@ describe("document and plan creation", () => {
       uploadedById: "user-pm",
       notes: "Coverage-created document.",
       clientFacing: false,
+      file: makeFile("proposal-attachment.pdf", "application/pdf"),
       fileName: "proposal-attachment.pdf",
       contentType: "application/pdf",
       sizeBytes: 2048,
@@ -136,6 +209,7 @@ describe("document and plan creation", () => {
       status: "APPROVED",
       notes: "Final signed version.",
       uploadedById: "user-pm",
+      file: makeFile("kiu-proposal-v3.pdf", "application/pdf"),
       fileName: "kiu-proposal-v3.pdf",
       contentType: "application/pdf",
       sizeBytes: 4096,
@@ -319,20 +393,100 @@ describe("task updates", () => {
     ]);
   });
 
+  it("updates gantt timeline fields in fallback mode", async () => {
+    const store = resetRuntimeStore();
+
+    await updateTaskTimelineRecord({
+      taskId: "task-1",
+      startDate: "2026-06-20",
+      endDate: "2026-06-24",
+      completionPercent: 55,
+      status: "IN_PROGRESS",
+      dependencyIds: ["task-2"],
+    });
+
+    const task = store.tasks.find((entry) => entry.id === "task-1");
+    expect(task?.startDate).toBe("2026-06-20");
+    expect(task?.endDate).toBe("2026-06-24");
+    expect(task?.completionPercent).toBe(55);
+    expect(task?.dependencyIds).toEqual(["task-2"]);
+  });
+
+  it("blocks self-dependency during gantt timeline updates", async () => {
+    resetRuntimeStore();
+
+    await expect(
+      updateTaskTimelineRecord({
+        taskId: "task-1",
+        startDate: "2026-06-20",
+        endDate: "2026-06-24",
+        completionPercent: 55,
+        status: "IN_PROGRESS",
+        dependencyIds: ["task-1"],
+      }),
+    ).rejects.toThrow("A task cannot depend on itself.");
+  });
+
   it("deletes a task and its linked runtime records in fallback mode", async () => {
     const store = resetRuntimeStore();
     const beforeTasks = store.tasks.length;
+    const beforeSubtasks = store.subtasks.length;
 
     await deleteTaskRecord("task-2");
 
     expect(store.tasks).toHaveLength(beforeTasks - 1);
+    expect(store.subtasks).toHaveLength(beforeSubtasks - 1);
     expect(store.tasks.find((task) => task.id === "task-2")).toBeUndefined();
+    expect(store.subtasks.some((subtask) => subtask.taskId === "task-2")).toBe(false);
     expect(store.timeLogs.some((log) => log.taskId === "task-2")).toBe(false);
     expect(
       store.comments.some(
         (comment) => comment.entityType === "TASK" && comment.entityId === "task-2",
       ),
     ).toBe(false);
+  });
+});
+
+describe("subtask updates", () => {
+  it("creates a subtask in fallback mode", async () => {
+    const store = resetRuntimeStore();
+    const beforeSubtasks = store.subtasks.length;
+
+    const subtask = await createSubtaskRecord({
+      taskId: "task-1",
+      title: "Prepare workshop checklist",
+      status: "NOT_STARTED",
+      startDate: "2026-06-17",
+      endDate: "2026-06-18",
+      estimatedHours: 2,
+      actualHours: 0,
+      completionPercent: 0,
+    });
+
+    expect(store.subtasks).toHaveLength(beforeSubtasks + 1);
+    expect(store.subtasks[0]?.id).toBe(subtask.id);
+    expect(store.subtasks[0]?.taskId).toBe("task-1");
+  });
+
+  it("updates a subtask in fallback mode", async () => {
+    const store = resetRuntimeStore();
+
+    await updateSubtaskRecord({
+      subtaskId: "subtask-1",
+      taskId: "task-2",
+      title: "Map final staffing assumptions",
+      status: "COMPLETED",
+      startDate: "2026-06-16",
+      endDate: "2026-06-19",
+      estimatedHours: 6,
+      actualHours: 5,
+      completionPercent: 100,
+    });
+
+    const subtask = store.subtasks.find((entry) => entry.id === "subtask-1");
+    expect(subtask?.title).toBe("Map final staffing assumptions");
+    expect(subtask?.status).toBe("COMPLETED");
+    expect(subtask?.completionPercent).toBe(100);
   });
 });
 
@@ -358,5 +512,69 @@ describe("time logging", () => {
     expect(store.tasks.find((task) => task.id === "task-1")?.actualHours).toBe(
       beforeActualHours + 2.5,
     );
+  });
+});
+
+describe("handover updates", () => {
+  it("updates handover fields in fallback mode", async () => {
+    const store = resetRuntimeStore();
+
+    await updateHandoverRecord({
+      handoverId: "handover-1",
+      checklist: ["Confirm training docs", "Send closure note"],
+      signOffStatus: "SIGNED",
+      walkthroughDate: "2026-06-22",
+      signedBy: "Grace Ong",
+      signOffDate: "2026-06-23",
+      pendingActions: ["Archive signed sheet"],
+      closureNotes: "Client accepted the delivery pack.",
+    });
+
+    const handover = store.handovers.find((entry) => entry.id === "handover-1");
+    expect(handover?.checklist).toEqual(["Confirm training docs", "Send closure note"]);
+    expect(handover?.signOffStatus).toBe("SIGNED");
+    expect(handover?.signedBy).toBe("Grace Ong");
+    expect(handover?.closureNotes).toBe("Client accepted the delivery pack.");
+  });
+
+  it("throws when the handover record is missing", async () => {
+    resetRuntimeStore();
+
+    await expect(
+      updateHandoverRecord({
+        handoverId: "handover-missing",
+        checklist: [],
+        signOffStatus: "PREPARING",
+        walkthroughDate: "2026-06-22",
+        pendingActions: [],
+      }),
+    ).rejects.toThrow("Handover record not found.");
+  });
+});
+
+describe("reporting view", () => {
+  it("includes workload and handover summaries in fallback mode", async () => {
+    resetRuntimeStore();
+
+    const reports = await getReportsView();
+
+    expect(reports.workload.some((entry) => entry.name === "Alicia Tan")).toBe(true);
+    expect(reports.handoverSummaries[0]?.handoverId).toBe("handover-1");
+    expect(reports.clientSummaries.some((entry) => entry.clientId === "client-retail")).toBe(
+      true,
+    );
+  });
+});
+
+describe("notification updates", () => {
+  it("toggles notification read state in fallback mode", async () => {
+    const store = resetRuntimeStore();
+
+    await updateNotificationReadState({
+      notificationId: "notif-1",
+      read: true,
+    });
+
+    expect(store.notifications.find((entry) => entry.id === "notif-1")?.read).toBe(true);
   });
 });

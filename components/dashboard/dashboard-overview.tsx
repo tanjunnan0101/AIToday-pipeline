@@ -19,32 +19,32 @@ export async function DashboardOverview() {
     <div className="space-y-6">
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard
+          accent="linear-gradient(90deg,#0f766e,#22d3ee)"
+          detail={`${metrics.totalClients} tracked accounts across closing, development, and handover`}
+          icon={<BriefcaseBusiness className="h-5 w-5" />}
           label="Active clients"
           value={String(metrics.activeClients)}
-          detail={`${metrics.totalClients} tracked accounts across closing, development, and handover`}
-          accent="linear-gradient(90deg,#0f766e,#22d3ee)"
-          icon={<BriefcaseBusiness className="h-5 w-5" />}
         />
         <MetricCard
+          accent="linear-gradient(90deg,#dc2626,#fb923c)"
+          detail="Immediate escalation candidates inside roadmap execution"
+          icon={<AlertTriangle className="h-5 w-5" />}
           label="Blocked tasks"
           value={String(metrics.blockedTasks)}
-          detail="Immediate escalation candidates inside roadmap execution"
-          accent="linear-gradient(90deg,#dc2626,#fb923c)"
-          icon={<AlertTriangle className="h-5 w-5" />}
         />
         <MetricCard
+          accent="linear-gradient(90deg,#d97706,#facc15)"
+          detail="Pipeline stages without a linked deliverable or support file"
+          icon={<FileWarning className="h-5 w-5" />}
           label="Missing documents"
           value={String(metrics.missingDocuments)}
-          detail="Pipeline stages without a linked deliverable or support file"
-          accent="linear-gradient(90deg,#d97706,#facc15)"
-          icon={<FileWarning className="h-5 w-5" />}
         />
         <MetricCard
+          accent="linear-gradient(90deg,#4338ca,#06b6d4)"
+          detail={`${formatHours(metrics.billableHours)} billable across current delivery motion`}
+          icon={<Clock3 className="h-5 w-5" />}
           label="Logged hours"
           value={formatHours(metrics.totalHours)}
-          detail={`${formatHours(metrics.billableHours)} billable across current delivery motion`}
-          accent="linear-gradient(90deg,#4338ca,#06b6d4)"
-          icon={<Clock3 className="h-5 w-5" />}
         />
       </section>
 
@@ -65,7 +65,7 @@ export async function DashboardOverview() {
                   <div className="space-y-2">
                     <p className="text-sm font-semibold text-slate-950">{task.title}</p>
                     <p className="text-sm text-slate-600">
-                      {task.stageName} · {task.ownerName}
+                      {task.stageName} | {task.ownerName}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -96,10 +96,7 @@ export async function DashboardOverview() {
           />
           <div className="space-y-4">
             {clients.map((client) => (
-              <div
-                key={client.id}
-                className="rounded-2xl border border-slate-200/70 p-4"
-              >
+              <div key={client.id} className="rounded-2xl border border-slate-200/70 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-semibold text-slate-950">{client.companyName}</p>

@@ -251,6 +251,30 @@ export const appData: AppData = {
   ],
   stages,
   tasks,
+  subtasks: [
+    {
+      id: "subtask-1",
+      taskId: "task-2",
+      title: "Map staffing assumptions into workload lanes",
+      status: "IN_PROGRESS",
+      startDate: "2026-06-16",
+      endDate: "2026-06-18",
+      estimatedHours: 6,
+      actualHours: 3,
+      completionPercent: 50,
+    },
+    {
+      id: "subtask-2",
+      taskId: "task-5",
+      title: "Upload final walkthrough recording",
+      status: "NOT_STARTED",
+      startDate: "2026-06-18",
+      endDate: "2026-06-19",
+      estimatedHours: 2,
+      actualHours: 0,
+      completionPercent: 0,
+    },
+  ],
   documents: [
     {
       id: "doc-1",
@@ -409,9 +433,18 @@ export const appData: AppData = {
     {
       id: "handover-1",
       clientId: "client-retail",
+      checklist: [
+        "Upload final walkthrough recording",
+        "Confirm client portal contains approved sign-off pack",
+        "Verify support handover contacts are shared",
+      ],
       signOffStatus: "SENT_TO_CLIENT",
       walkthroughDate: "2026-06-19",
+      signedBy: "Asha Menon",
+      signOffDate: "2026-06-21",
       pendingActions: ["Confirm recording access", "Return signed closure sheet"],
+      closureNotes:
+        "Client team is comfortable with the rollout. Waiting on final signed closure sheet before marking completed.",
     },
   ],
   comments: [
